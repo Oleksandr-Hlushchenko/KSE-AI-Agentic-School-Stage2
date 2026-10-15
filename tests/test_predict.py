@@ -9,7 +9,7 @@ from air_alerts.dataset import build_dataset
 from air_alerts.data import build_episodes, parse_events
 from air_alerts.fetch import CacheError, check_coverage, load_cache, load_latest, save_cache
 from air_alerts.models import DECAY_MODELS
-from air_alerts.predict import FINAL_MODEL, describe, forecast_at
+from air_alerts.predict import FINAL_MODEL, describe_details, describe_simple, forecast_at
 from air_alerts.walkforward import walk_forward_predict
 
 # --- forecasting protocol ----------------------------------------------------------------
@@ -32,7 +32,7 @@ def test_forecast_trains_on_labels_known_at_last_midnight(events):
     assert fc.train_until + config.HORIZON <= fc.refit_at
     assert fc.train_until + config.HORIZON + pd.Timedelta(hours=1) > fc.refit_at
     assert 0 < fc.probability < 1
-    assert "P(new alert starts by 2026-09-20 17:37)" in describe(fc)
+    assert "P(new alert starts by 2026-09-20 17:37)" in describe_details(fc)
 
 
 def test_on_the_hour_forecasts_reproduce_walk_forward_evaluation(events):
@@ -187,3 +187,62 @@ def test_missing_cache_uses_pinned_snapshot_quietly(tmp_path):
     src = load_latest(fetch=False, cache=tmp_path / "absent.json")
     assert src.note.startswith("pinned snapshot") and not src.warnings
     assert src.events["t"].is_monotonic_increasing
+
+
+# --- user-facing output ------------------------------------------------------------------
+
+TECHNICAL = ("Brier", "ROC", "logistic", "baseline", "Model", "P(")
+
+
+def test_simple_message_is_short_ukrainian_and_free_of_metrics(events):
+    fc = forecast_at(events, config.kyiv("2026-09-20 14:37"))
+    text = describe_simple(fc)
+    assert "Станом на 20.09.2026, 14:37" in text
+    assert f"Ймовірність нової тривоги до 17:37: {fc.probability:.0%}" in text
+    assert "не офіційне попередження" in text
+    assert not any(word in text for word in TECHNICAL)
+    assert len(text.splitlines()) <= 10
+
+
+@pytest.mark.parametrize("at, expected", [
+    ("2026-10-10 18:00", "Зараз триває повітряна тривога"),  # alert started 15:43
+    ("2026-09-20 14:00", "Зараз тривоги немає. Останній відбій був 29 хв тому."),  # all-clear 13:30:43
+])
+def test_simple_message_states_current_status(events, at, expected):
+    fc = forecast_at(events, config.kyiv(at))
+    assert bool(fc.features["active_now"]) == expected.startswith("Зараз триває")
+    assert expected in describe_simple(fc)
+
+
+@pytest.mark.parametrize("p, word", [(0.05, "низька"), (0.2999, "низька"), (0.30, "помірна"),
+                                     (0.5999, "помірна"), (0.60, "висока"), (0.99, "висока")])
+def test_probability_words(events, p, word):
+    fc = forecast_at(events, config.kyiv("2026-09-20 14:37"))
+    fc.probability = p
+    assert f"({word})" in describe_simple(fc)
+
+
+def run_cli(*args):
+    import subprocess
+    import sys
+    return subprocess.run([sys.executable, str(config.ROOT / "scripts" / "predict.py"), *args],
+                          capture_output=True, text=True, timeout=120)
+
+
+def test_cli_default_output_is_simple_and_details_adds_metrics():
+    plain = run_cli("--at", "2026-10-10 18:00")
+    assert plain.returncode == 0, plain.stderr
+    assert "Ймовірність нової тривоги" in plain.stdout and "Відтворення минулого моменту" in plain.stdout
+    assert not any(word in plain.stdout for word in TECHNICAL)
+
+    detailed = run_cli("--at", "2026-10-10 18:00", "--details")
+    assert detailed.returncode == 0, detailed.stderr
+    assert detailed.stdout.startswith(plain.stdout.rstrip("\n"))
+    assert "Brier skill" in detailed.stdout and "Data:" in detailed.stdout
+
+
+@pytest.mark.parametrize("at, message", [("yesterday evening", "Не вдалося розпізнати час"),
+                                         ("2030-01-01 00:00", "прогноз на пізніший момент неможливий")])
+def test_cli_errors_are_in_ukrainian(at, message):
+    result = run_cli("--at", at)
+    assert result.returncode != 0 and message in result.stderr

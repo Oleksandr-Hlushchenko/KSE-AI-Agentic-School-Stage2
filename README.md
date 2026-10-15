@@ -11,9 +11,25 @@ Why this target and source, and what was rejected, is in [DECISIONS.md](DECISION
 .venv/bin/python scripts/predict.py                          # download fresh data, forecast for now
 .venv/bin/python scripts/predict.py --offline                # no download: forecast as of the last download
 .venv/bin/python scripts/predict.py --at "2026-10-10 18:00"  # replay a past moment (Kyiv time)
+.venv/bin/python scripts/predict.py --details                # add model inputs, training data, metrics
 ```
-The script downloads the full public history from Kyiv Digital (no token needed) and prints
-P(new alert starts within 3 hours) with the current status and the baseline for comparison.
+The script downloads the full public history from Kyiv Digital (no token needed). By default it
+prints a short message in Ukrainian:
+```
+Київ: прогноз повітряних тривог
+Станом на 16.10.2026, 00:28
+
+Ймовірність нової тривоги до 03:28: 61% (висока)
+
+Зараз триває повітряна тривога (1 год 26 хв). Прогноз стосується наступної тривоги після відбою.
+
+Це статистична оцінка, а не офіційне попередження.
+Завжди реагуйте на сигнал повітряної тривоги.
+```
+The word in brackets is a presentation choice (below 30% низька, below 60% помірна, otherwise
+висока), not something that was evaluated. `--details` appends the technical summary in English:
+features, the 24h baseline for comparison, training data and historical metrics, plus technical
+warnings.
 - **Same procedure as evaluated:** the model is fit on outcomes known at the latest Kyiv midnight
   (the walk-forward protocol); only the features use events up to the forecast minute. A test
   checks that on-the-hour live forecasts equal the walk-forward predictions.

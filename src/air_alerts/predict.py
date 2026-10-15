@@ -61,8 +61,47 @@ def forecast_at(events: pd.DataFrame, at: pd.Timestamp, model: str = FINAL_MODEL
     )
 
 
-def describe(fc: Forecast) -> str:
-    """Human-readable summary in Kyiv time."""
+# Words for the probability, for the short message only. A presentation choice, not evaluated:
+# in the test period 3-hour windows had a new alert 70% of the time, so "висока" is common.
+LEVELS = [(0.30, "низька"), (0.60, "помірна"), (1.01, "висока")]
+
+
+def duration_uk(minutes: float) -> str:
+    m = int(round(minutes))
+    return f"{m} хв" if m < 60 else f"{m // 60} год {m % 60} хв"
+
+
+def describe_simple(fc: Forecast) -> str:
+    """Short message for people, in Ukrainian: time, probability, current status, disclaimer."""
+    issued = fc.issued_at.tz_convert(config.TZ)
+    until = (fc.issued_at + config.HORIZON).tz_convert(config.TZ)
+    until_text = f"{until:%H:%M}" if until.date() == issued.date() else f"{until:%H:%M} {until:%d.%m}"
+    level = next(word for limit, word in LEVELS if fc.probability < limit)
+
+    f = fc.features
+    if f["active_now"]:
+        status = (f"Зараз триває повітряна тривога ({duration_uk(f['current_alert_min'])}). "
+                  "Прогноз стосується наступної тривоги після відбою.")
+    elif np.isnan(f["min_since_last_end"]):
+        status = "Зараз тривоги немає."
+    else:
+        status = f"Зараз тривоги немає. Останній відбій був {duration_uk(f['min_since_last_end'])} тому."
+
+    return "\n".join([
+        "Київ: прогноз повітряних тривог",
+        f"Станом на {issued:%d.%m.%Y, %H:%M}",
+        "",
+        f"Ймовірність нової тривоги до {until_text}: {fc.probability:.0%} ({level})",
+        "",
+        status,
+        "",
+        "Це статистична оцінка, а не офіційне попередження.",
+        "Завжди реагуйте на сигнал повітряної тривоги.",
+    ])
+
+
+def describe_details(fc: Forecast) -> str:
+    """Technical summary (English): inputs, comparison, training data and historical metrics."""
     def kyiv(ts: pd.Timestamp) -> str:
         return ts.tz_convert(config.TZ).strftime("%Y-%m-%d %H:%M")
 
@@ -81,9 +120,9 @@ def describe(fc: Forecast) -> str:
         latest = "none"
 
     return "\n".join([
-        f"Kyiv City air-alert forecast, issued {kyiv(fc.issued_at)} Kyiv time",
+        f"Details: forecast issued {kyiv(fc.issued_at)} Kyiv time",
         "",
-        f"  P(new alert starts by {kyiv(until)}):  {fc.probability:.0%}",
+        f"  P(new alert starts by {kyiv(until)}):  {fc.probability:.4f}",
         "",
         f"  Status now:            {status}",
         f"  Alert starts:          {f['starts_3h']:.0f} in last 3h, {f['starts_24h']:.0f} in last 24h, {f['starts_7d']:.0f} in last 7 days",
@@ -100,5 +139,6 @@ def describe(fc: Forecast) -> str:
         "  the hour): Brier skill +0.04 vs the period's base rate, ROC-AUC 0.64. The same forecasts",
         "  moved to random minutes scored alike (+0.05, 0.65; scripts/check_minute_offsets.py).",
         "  Mostly right on the overall level, weak at telling individual hours apart.",
-        "  Not an official warning.",
+        f"  Probability words in the short message: below {LEVELS[0][0]:.0%} {LEVELS[0][1]}, below "
+        f"{LEVELS[1][0]:.0%} {LEVELS[1][1]}, else {LEVELS[2][1]} (presentation only, not evaluated).",
     ])
