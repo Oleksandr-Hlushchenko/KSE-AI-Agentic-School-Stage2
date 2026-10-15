@@ -1,0 +1,8 @@
+{
+  "source_url": "https://kyiv.digital/open-api/air-alert/history",
+  "retrieved_date": "2026-10-15",
+  "raw_sha256": "417e4024d258163c9ead52f80542d2566da0ea0a700bba70d933bbd616df1b3d",
+  "event_count": 5384,
+  "timezone_note": "created_at has no UTC offset; API schema does not specify timezone. Preserve raw values; confirm before aligning sources.",
+  "csv_note": "CSV contains same events sorted by created_at; causes encoded as JSON arrays."
+}
