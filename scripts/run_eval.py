@@ -8,6 +8,7 @@ Two protocols for the learned models:
   "wf"    walk-forward: refit every Kyiv midnight on all labels observed so far
 
 The test period is meant to be looked at once, after all choices are made on validation.
+With --test only the FINAL set, frozen before the test was run, is scored.
 """
 import argparse
 import sys
@@ -27,6 +28,13 @@ from air_alerts.walkforward import walk_forward_predict  # noqa: E402
 # sklearn_gbdt is only a cross-check of LightGBM; static is enough for it.
 WALK_FORWARD = ["logistic", "lightgbm", "logistic+base", "lightgbm+base"]
 
+# Frozen on 2026-10-15 from validation results, before the test period was scored.
+FINAL = {
+    "static": ["logistic", "lightgbm"],
+    "baselines": ["recent_rate_24h", "recent_rate_24h_floor"],
+    "walk_forward": {"lightgbm": MODELS["lightgbm"], "logistic+decay14": DECAY_MODELS["logistic+decay14"]},
+}
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -41,8 +49,15 @@ def main() -> None:
         fit_on, target = df[df["split"] == "train"], df[df["split"] == "val"]
         start, end = config.VAL_START, config.TEST_START
 
-    preds = {name: cls().fit(fit_on).predict(target) for name, cls in {**BASELINES, **MODELS}.items()}
-    for name, factory in {**{n: MODELS[n] for n in WALK_FORWARD}, **DECAY_MODELS}.items():
+    if args.test:
+        static = {n: {**BASELINES, **MODELS}[n] for n in FINAL["baselines"] + FINAL["static"]}
+        walk_forward = FINAL["walk_forward"]
+    else:
+        static = {**BASELINES, **MODELS}
+        walk_forward = {**{n: MODELS[n] for n in WALK_FORWARD}, **DECAY_MODELS}
+
+    preds = {name: cls().fit(fit_on).predict(target) for name, cls in static.items()}
+    for name, factory in walk_forward.items():
         wf = walk_forward_predict(df, factory, start, end)
         preds[f"{name} wf"] = wf.reindex(target.index).to_numpy()
     results = evaluate(target, preds)

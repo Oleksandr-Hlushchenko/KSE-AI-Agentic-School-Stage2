@@ -57,6 +57,20 @@ class RecentRatePoisson24h(RecentRatePoisson):
     window_h = 24
 
 
+class FlooredRecentRate24h(RecentRatePoisson24h):
+    """The 24h rate with probabilities kept in [0.05, 0.95].
+
+    With no start in the last 24h the Poisson formula says P = 0, which is never justified
+    (on validation 4 of 16 such hours were followed by an alert). The floor fixes that
+    structural flaw. It was chosen after seeing validation, as a round number, not tuned.
+    """
+
+    floor = 0.05
+
+    def predict(self, df: pd.DataFrame) -> np.ndarray:
+        return np.clip(super().predict(df), self.floor, 1 - self.floor)
+
+
 class ConditionalPersistence:
     """P(start in next 3h | was there a start in the last 3h), estimated on training rows."""
 
@@ -75,4 +89,5 @@ BASELINES = {
     "persistence_3h": ConditionalPersistence,
     "recent_rate_7d": RecentRatePoisson,
     "recent_rate_24h": RecentRatePoisson24h,
+    "recent_rate_24h_floor": FlooredRecentRate24h,
 }

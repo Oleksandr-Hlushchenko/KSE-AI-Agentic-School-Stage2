@@ -87,3 +87,11 @@ Weight = 0.5^(age / half-life), with age counted from the newest training row of
 - **Decay does not help LightGBM; at 14d it is worse.** A 14-day half-life leaves about 14 / ln 2 × 24 ≈ 480 hours of effective data. That is enough for logistic's 13 coefficients, but too little for 300 trees × 15 leaves, which then fit noise (log loss 0.85).
 - **The apparent log-loss win over the baseline is an artifact.** The baseline says P = 0 in the 16 hours with no start in the last 24h, and 4 of them were followed by an alert. Those hours alone add 0.096 to its log loss. On the other 558 hours the baseline scores 0.606 vs logistic 0.659. Floored at 0.05, the baseline scores 0.611 overall.
 - **The baseline still wins in every 8-day block:** +0.36 / +0.13 / −0.05 vs logistic-decay14 +0.18 / +0.07 / −0.08.
+
+## Frozen before the test run (committed before `run_eval.py --test` was executed)
+Test period: forecasts issued 2026-09-17 00:00 → 2026-10-14 21:00 Kyiv. It is scored once, with no changes afterwards.
+- **Primary forecaster: `recent_rate_24h_floor`**, the 24h Poisson rate with P kept in [0.05, 0.95]. It is the best on validation (BSS +0.15, log loss 0.611). The 0.05 floor was set after seeing validation, as a round number, to remove exact-zero probabilities.
+- **Best learned model: logistic, walk-forward, 14-day decay** (validation BSS +0.06).
+- References, to show the path from the first attempt: `recent_rate_24h` without the floor; logistic and LightGBM trained once (on train+val for the test); LightGBM walk-forward without decay.
+- Protocol: models trained once are fit on 2023-01-01 → 2026-09-16. Walk-forward models refit every Kyiv midnight on all labels observed by then, including earlier test days.
+- Expectation written down beforehand: the test base rate is 0.70, higher than validation (0.57), and the escalation continues. The recent-rate approach should keep working. Models trained once should do badly again, though less than on validation, because train+val now includes 3 weeks of escalation.
