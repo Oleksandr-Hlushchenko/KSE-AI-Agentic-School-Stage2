@@ -6,7 +6,30 @@ published before that moment.
 
 Why this target and source, and what was rejected, is in [DECISIONS.md](DECISIONS.md).
 
-## Get a forecast
+## Quick start with Docker
+Needs only Docker. The image pins Python 3.12.10 and every dependency.
+```bash
+docker compose build
+docker compose run --rm forecast                          # download fresh data, forecast for now
+docker compose run --rm forecast --details                # plus model inputs and metrics
+docker compose run --rm forecast --at "2026-10-10 18:00"  # replay a past moment (Kyiv time)
+docker compose --profile tools run --rm tests             # full test suite (85 tests)
+docker compose --profile tools run --rm evaluate          # reproduce the one-time test scores
+docker compose --profile tools run --rm analyze           # bootstrap CI and breakdowns
+```
+The `forecast` service keeps the last good download in a named volume (`live-data`), so
+`--offline` and the no-network fallback work across runs. Without network and without a cached
+download, it falls back to the pinned snapshot and says so.
+
+Checked from a fresh `git clone` with `docker compose build --no-cache --pull` (Linux aarch64):
+- all 85 tests pass;
+- every forecast mode works, including no network and an empty cache;
+- the validation and test metrics match `reports/eval_*.csv` to within 5×10⁻¹³ (floating-point
+  noise between macOS and Linux; identical at 3 decimals);
+- the bootstrap interval is identical.
+
+## Get a forecast (local Python)
+Set up the environment first (see [Setup and run](#setup-and-run)), then:
 ```bash
 .venv/bin/python scripts/predict.py                          # download fresh data, forecast for now
 .venv/bin/python scripts/predict.py --offline                # no download: forecast as of the last download
@@ -46,7 +69,7 @@ warnings.
 offset; they are converted to UTC with DST handling. The loader checks the file's sha256.
 
 ## Setup and run
-Requires **Python 3.12 or later** (the pinned numpy 2.5.4 does not support 3.11; results were
+Without Docker. Requires **Python 3.12 or later** (the pinned numpy 2.5.4 does not support 3.11; results were
 produced with 3.12.10). On macOS LightGBM also needs the OpenMP runtime: `brew install libomp`.
 ```bash
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
@@ -71,6 +94,7 @@ scripts/predict.py
 scripts/check_minute_offsets.py   off-the-hour forecasts vs on-the-hour, test period
 scripts/analyze_test.py           bootstrap CI and breakdowns for the test result
 scripts/make_charts.py            README charts -> reports/figures/
+Dockerfile, docker-compose.yml    container image and services (forecast; tests/evaluate/analyze)
 scripts/run_eval.py
 tests/          data, label and leakage tests
 ```
@@ -126,3 +150,5 @@ daily, and weighting recent weeks more, is what worked on test.
 - [x] Walk-forward daily retraining; baseline log-odds as a feature — helps, still below the 24h baseline
 - [x] Time-decay weights (14d / 60d): logistic reaches BSS +0.06, still below the 24h baseline
 - [x] One-time evaluation on the test period (plan frozen in commit 6ce1942 before scoring)
+- [x] Live forecast CLI (short Ukrainian message, `--details`), validated download cache
+- [x] Docker image and compose stack, verified from a clean clone

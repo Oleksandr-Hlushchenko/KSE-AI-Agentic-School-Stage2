@@ -1,0 +1,35 @@
+# docker compose run --rm forecast                        # fresh data, forecast for now
+# docker compose run --rm forecast --details              # plus model inputs and metrics
+# docker compose run --rm forecast --at "2026-10-10 18:00"
+# docker compose --profile tools run --rm tests           # full test suite
+# docker compose --profile tools run --rm evaluate        # one-time test scoring, reproduced
+# docker compose --profile tools run --rm analyze         # bootstrap CI and breakdowns
+
+x-app: &app
+  build: .
+  image: kyiv-alert-forecast:latest
+
+services:
+  forecast:
+    <<: *app
+    volumes:
+      - live-data:/app/data/live   # keeps the last good download for --offline and fallbacks
+
+  tests:
+    <<: *app
+    profiles: [tools]
+    entrypoint: ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+
+  evaluate:
+    <<: *app
+    profiles: [tools]
+    entrypoint: ["python", "scripts/run_eval.py"]
+    command: ["--test"]
+
+  analyze:
+    <<: *app
+    profiles: [tools]
+    entrypoint: ["python", "scripts/analyze_test.py"]
+
+volumes:
+  live-data:
