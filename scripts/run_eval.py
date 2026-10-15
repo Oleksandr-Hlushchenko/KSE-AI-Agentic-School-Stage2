@@ -1,7 +1,11 @@
 """Score baselines and models on validation (default) or, once, on test.
 
-    python scripts/run_eval.py            # fit on train, score on val
-    python scripts/run_eval.py --test     # fit on train+val, score on test
+    python scripts/run_eval.py            # score on val
+    python scripts/run_eval.py --test     # score on test
+
+Two protocols for the learned models:
+  static  fit once on everything before the evaluated period (train, or train+val for test)
+  "wf"    walk-forward: refit every Kyiv midnight on all labels observed so far
 
 The test period is meant to be looked at once, after all choices are made on validation.
 """
@@ -18,6 +22,10 @@ from air_alerts.baselines import BASELINES  # noqa: E402
 from air_alerts.dataset import build_dataset  # noqa: E402
 from air_alerts.evaluate import evaluate  # noqa: E402
 from air_alerts.models import MODELS  # noqa: E402
+from air_alerts.walkforward import walk_forward_predict  # noqa: E402
+
+# sklearn_gbdt is only a cross-check of LightGBM; static is enough for it.
+WALK_FORWARD = ["logistic", "lightgbm", "logistic+base", "lightgbm+base"]
 
 
 def main() -> None:
@@ -28,10 +36,15 @@ def main() -> None:
     df = build_dataset()
     if args.test:
         fit_on, target = df[df["split"].isin(["train", "val"])], df[df["split"] == "test"]
+        start, end = config.TEST_START, config.CUTOFF
     else:
         fit_on, target = df[df["split"] == "train"], df[df["split"] == "val"]
+        start, end = config.VAL_START, config.TEST_START
 
     preds = {name: cls().fit(fit_on).predict(target) for name, cls in {**BASELINES, **MODELS}.items()}
+    for name in WALK_FORWARD:
+        wf = walk_forward_predict(df, MODELS[name], start, end)
+        preds[f"{name} wf"] = wf.reindex(target.index).to_numpy()
     results = evaluate(target, preds)
 
     period = "test" if args.test else "val"

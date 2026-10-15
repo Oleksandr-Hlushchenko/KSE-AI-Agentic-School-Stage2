@@ -10,6 +10,7 @@ from air_alerts.dataset import build_dataset
 from air_alerts.features import FEATURE_COLUMNS, make_features
 from air_alerts.labels import forecast_times
 from air_alerts.models import MODELS
+from air_alerts.walkforward import known_by, walk_forward_predict
 
 from .conftest import make_events
 
@@ -83,3 +84,25 @@ def test_forecasters_ignore_labels_outside_training_rows(dataset, name):
     p1 = FORECASTERS[name]().fit(train).predict(dataset)
     p2 = FORECASTERS[name]().fit(scrambled[scrambled["split"] == "train"]).predict(scrambled)
     np.testing.assert_allclose(p1, p2)
+
+
+def test_walk_forward_history_has_only_observed_labels(dataset):
+    day = config.kyiv("2026-09-01")
+    hist = known_by(dataset, day)
+    assert (hist.index + config.HORIZON <= day).all()
+    # the last 3 hours before midnight are still unresolved and must be excluded
+    assert hist.index.max() == day - config.HORIZON
+
+
+@pytest.mark.parametrize("name", ["logistic+base", "lightgbm+base"])
+def test_walk_forward_ignores_labels_not_yet_observed(dataset, name):
+    """Forecasts for day D must not change if every label not observed by D is flipped."""
+    for day in (config.kyiv("2026-08-25"), config.kyiv("2026-09-10")):
+        end = day + pd.DateOffset(days=1)
+        scrambled = dataset.copy()
+        unseen = scrambled.index + config.HORIZON > day
+        scrambled.loc[unseen, "y"] = 1 - scrambled.loc[unseen, "y"]
+        p1 = walk_forward_predict(dataset, MODELS[name], day, end)
+        p2 = walk_forward_predict(scrambled, MODELS[name], day, end)
+        assert len(p1) == 24
+        np.testing.assert_allclose(p1, p2)

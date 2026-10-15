@@ -3,6 +3,8 @@
 Hyperparameters are fixed up front, not tuned on validation: there are only 574 validation
 hours, and tuning on them would turn validation into training data.
 """
+from functools import partial
+
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
@@ -11,6 +13,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
+from .baselines import RecentRatePoisson24h
 from .features import FEATURE_COLUMNS
 
 LOG_COLUMNS = [
@@ -22,7 +25,15 @@ LOG_COLUMNS = [
 NEVER_MIN = 1e5
 
 
-def logistic_design(df: pd.DataFrame) -> pd.DataFrame:
+def baseline_logit(df: pd.DataFrame) -> np.ndarray:
+    """Log-odds of the 24h recent-rate baseline, as a feature. With it, a model only has to
+    learn corrections to the baseline instead of rebuilding the intensity signal itself.
+    Clipped because 0 starts in 24h gives P = 0 (log-odds -inf)."""
+    p = np.clip(RecentRatePoisson24h().predict(df), 0.01, 0.99)
+    return np.log(p / (1 - p))
+
+
+def logistic_design(df: pd.DataFrame, use_baseline: bool = False) -> pd.DataFrame:
     """log1p of counts and durations, so that the log-odds respond to *relative* change in
     alert intensity, and that response keeps going beyond the range seen in training."""
     x = pd.DataFrame(index=df.index)
@@ -31,18 +42,28 @@ def logistic_design(df: pd.DataFrame) -> pd.DataFrame:
     x["active_now"] = df["active_now"]
     x["hour_sin"] = df["hour_sin"]
     x["hour_cos"] = df["hour_cos"]
+    if use_baseline:
+        x["baseline_logit"] = baseline_logit(df)
     return x
 
 
+def tree_design(df: pd.DataFrame, use_baseline: bool = False) -> pd.DataFrame:
+    x = df[FEATURE_COLUMNS]
+    return x.assign(baseline_logit=baseline_logit(df)) if use_baseline else x
+
+
 class LogisticRate:
+    def __init__(self, use_baseline: bool = False):
+        self.use_baseline = use_baseline
+
     def fit(self, train: pd.DataFrame):
         # The scaler is part of the pipeline, so its mean/std come from training rows only.
         self.pipe_ = make_pipeline(StandardScaler(), LogisticRegression(C=1.0, max_iter=2000))
-        self.pipe_.fit(logistic_design(train), train["y"])
+        self.pipe_.fit(logistic_design(train, self.use_baseline), train["y"])
         return self
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
-        return self.pipe_.predict_proba(logistic_design(df))[:, 1]
+        return self.pipe_.predict_proba(logistic_design(df, self.use_baseline))[:, 1]
 
     def coefficients(self) -> pd.Series:
         lr = self.pipe_[-1]
@@ -56,6 +77,9 @@ class LightGBM:
     Needs the OpenMP runtime on macOS (`brew install libomp`).
     """
 
+    def __init__(self, use_baseline: bool = False):
+        self.use_baseline = use_baseline
+
     def fit(self, train: pd.DataFrame):
         self.model_ = lgb.LGBMClassifier(
             learning_rate=0.05,
@@ -67,11 +91,11 @@ class LightGBM:
             n_jobs=1,  # deterministic results
             verbose=-1,
         )
-        self.model_.fit(train[FEATURE_COLUMNS], train["y"])
+        self.model_.fit(tree_design(train, self.use_baseline), train["y"])
         return self
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
-        return self.model_.predict_proba(df[FEATURE_COLUMNS])[:, 1]
+        return self.model_.predict_proba(tree_design(df, self.use_baseline))[:, 1]
 
 
 class BoostedTrees:
@@ -103,4 +127,6 @@ MODELS = {
     "logistic": LogisticRate,
     "lightgbm": LightGBM,
     "sklearn_gbdt": BoostedTrees,
+    "logistic+base": partial(LogisticRate, use_baseline=True),
+    "lightgbm+base": partial(LightGBM, use_baseline=True),
 }

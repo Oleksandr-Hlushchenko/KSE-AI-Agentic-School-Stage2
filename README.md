@@ -30,6 +30,7 @@ src/air_alerts/
   baselines.py  reference forecasters
   models.py     logistic regression, LightGBM, sklearn gradient boosting
   evaluate.py   Brier / log loss / ROC-AUC / PR-AUC, all hours and calm hours
+  walkforward.py  daily refit on labels observed so far
 scripts/run_eval.py
 tests/          data, label and leakage tests
 ```
@@ -37,5 +38,6 @@ tests/          data, label and leakage tests
 ## Status
 - [x] Data loading, labeling, leakage tests, baselines
 - [x] First models (logistic regression, gradient boosting) — both lose to the 24h baseline, see DECISIONS.md
-- [ ] Models that adapt to the escalation
+- [x] Walk-forward daily retraining; baseline log-odds as a feature — helps, still below the 24h baseline
+- [ ] Weight recent data (time-decay or short window)
 - [ ] One-time evaluation on the test period

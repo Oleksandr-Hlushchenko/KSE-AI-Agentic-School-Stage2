@@ -53,3 +53,19 @@ Short record of what was decided, why, and what evidence it rests on. Dates are 
 - **Boosted trees invert the ranking** (AUC < 0.5). In the sparse high-activity tail they learned "very active → lower P". LightGBM's P falls from 0.08 to 0.044 as `starts_24h` goes from 3 to 6 and then stays flat: trees cannot extrapolate beyond the training range. They predict 0.08–0.10 exactly where validation sees 0.63–0.84. Shuffling `starts_24h` *improves* LightGBM's validation AUC by 0.064.
 - **Logistic is monotone and extrapolates in the right direction** (P rises 0.23 → 0.37 across the same bins), but the slope and intercept are learned from the calm era, so it is far too low. The correlated count features also split credit (7d positive, 24h negative), while 24h is the signal that matters in the escalation.
 - **The 24h Poisson baseline wins because it learns nothing from the calm era.** It maps current intensity straight to a probability.
+
+## Walk-forward retraining and the baseline feature (validation)
+Protocol: before each Kyiv midnight D, refit on every row whose label is observed (t + 3h <= D), then forecast all hours of D. Tests check that flipping every label not yet observed by D leaves D's forecasts unchanged. A planted leak (`t <= D` instead of `t + 3h <= D`) fails 3 tests.
+
+| model | BSS all / calm | ROC-AUC all / calm | mean p (base rate 0.568) |
+|---|---|---|---|
+| recent_rate_24h (baseline) | **+0.15 / +0.19** | **0.75 / 0.78** | 0.47 |
+| logistic, static → walk-forward | −0.22 → −0.12 / −0.16 → −0.06 | 0.63 → 0.62 | 0.31 → 0.37 |
+| logistic+base, static → walk-forward | −0.21 → −0.10 / −0.15 → −0.04 | 0.63 → 0.63 | 0.32 → 0.37 |
+| LightGBM, static → walk-forward | −0.90 → −0.07 / −0.86 → +0.01 | 0.36 → 0.61 | 0.14 → 0.48 |
+| LightGBM+base | identical to LightGBM | | |
+
+- **Walk-forward fixes most of LightGBM's failure** (BSS −0.90 → −0.07, AUC 0.36 → 0.61). Retraining daily lets it see escalation hours, so it stops predicting 0.08 where the actual rate is 0.6–0.8. Logistic gains less, because its static version already extrapolated in the right direction.
+- **Neither beats the baseline.** At the start of each 8-day validation block, escalation rows are 0%, 0.6% and 1.2% of the training set. With equal weights, three years of calm data outvote three weeks of escalation.
+- **The baseline feature changes nothing for LightGBM (exactly identical predictions).** `baseline_logit` is a monotone function of `starts_24h`, and trees only use the order of a feature's values. For logistic it adds little (+0.01–0.02 BSS) because `log_starts_24h` already carries almost the same information.
+- **The 24h baseline's own skill drifts down across the period:** 8-day BSS +0.36, +0.13, −0.05. Validation is short (3 × ~190 hours), so all these numbers are noisy.
