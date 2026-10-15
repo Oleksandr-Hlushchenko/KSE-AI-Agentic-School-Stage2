@@ -69,3 +69,21 @@ Protocol: before each Kyiv midnight D, refit on every row whose label is observe
 - **Neither beats the baseline.** At the start of each 8-day validation block, escalation rows are 0%, 0.6% and 1.2% of the training set. With equal weights, three years of calm data outvote three weeks of escalation.
 - **The baseline feature changes nothing for LightGBM (exactly identical predictions).** `baseline_logit` is a monotone function of `starts_24h`, and trees only use the order of a feature's values. For logistic it adds little (+0.01–0.02 BSS) because `log_starts_24h` already carries almost the same information.
 - **The 24h baseline's own skill drifts down across the period:** 8-day BSS +0.36, +0.13, −0.05. Validation is short (3 × ~190 hours), so all these numbers are noisy.
+
+## Time-decay sample weights (walk-forward, validation)
+Weight = 0.5^(age / half-life), with age counted from the newest training row of each fit. Half-lives fixed in advance: **14 days**, and one alternative, **60 days**. No other values were tried.
+
+| walk-forward model | BSS all / calm | log loss | ROC-AUC all / calm | mean p (0.568) |
+|---|---|---|---|---|
+| recent_rate_24h (baseline) | **+0.15 / +0.19** | 0.685 (0.611 with p floored at 0.05) | **0.75 / 0.78** | 0.47 |
+| logistic, no decay | −0.12 / −0.06 | 0.744 | 0.62 / 0.68 | 0.37 |
+| **logistic, decay 14d** | **+0.06 / +0.10** | 0.656 | 0.67 / 0.70 | 0.55 |
+| logistic, decay 60d | +0.02 / +0.07 | 0.673 | 0.63 / 0.68 | 0.50 |
+| LightGBM, no decay | −0.07 / +0.01 | 0.740 | 0.61 / 0.65 | 0.48 |
+| LightGBM, decay 14d | −0.14 / −0.08 | 0.851 | 0.64 / 0.66 | 0.54 |
+| LightGBM, decay 60d | −0.07 / −0.01 | 0.772 | 0.64 / 0.68 | 0.54 |
+
+- **Decay helps logistic** (BSS −0.12 → +0.06 at 14d, +0.02 at 60d). It now predicts close to the actual level (mean p 0.55 vs 0.57). Both half-lives help, so the direction does not depend on the exact value.
+- **Decay does not help LightGBM; at 14d it is worse.** A 14-day half-life leaves about 14 / ln 2 × 24 ≈ 480 hours of effective data. That is enough for logistic's 13 coefficients, but too little for 300 trees × 15 leaves, which then fit noise (log loss 0.85).
+- **The apparent log-loss win over the baseline is an artifact.** The baseline says P = 0 in the 16 hours with no start in the last 24h, and 4 of them were followed by an alert. Those hours alone add 0.096 to its log loss. On the other 558 hours the baseline scores 0.606 vs logistic 0.659. Floored at 0.05, the baseline scores 0.611 overall.
+- **The baseline still wins in every 8-day block:** +0.36 / +0.13 / −0.05 vs logistic-decay14 +0.18 / +0.07 / −0.08.

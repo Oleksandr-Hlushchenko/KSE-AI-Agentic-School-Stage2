@@ -21,7 +21,7 @@ from air_alerts import config  # noqa: E402
 from air_alerts.baselines import BASELINES  # noqa: E402
 from air_alerts.dataset import build_dataset  # noqa: E402
 from air_alerts.evaluate import evaluate  # noqa: E402
-from air_alerts.models import MODELS  # noqa: E402
+from air_alerts.models import DECAY_MODELS, MODELS  # noqa: E402
 from air_alerts.walkforward import walk_forward_predict  # noqa: E402
 
 # sklearn_gbdt is only a cross-check of LightGBM; static is enough for it.
@@ -42,8 +42,8 @@ def main() -> None:
         start, end = config.VAL_START, config.TEST_START
 
     preds = {name: cls().fit(fit_on).predict(target) for name, cls in {**BASELINES, **MODELS}.items()}
-    for name in WALK_FORWARD:
-        wf = walk_forward_predict(df, MODELS[name], start, end)
+    for name, factory in {**{n: MODELS[n] for n in WALK_FORWARD}, **DECAY_MODELS}.items():
+        wf = walk_forward_predict(df, factory, start, end)
         preds[f"{name} wf"] = wf.reindex(target.index).to_numpy()
     results = evaluate(target, preds)
 

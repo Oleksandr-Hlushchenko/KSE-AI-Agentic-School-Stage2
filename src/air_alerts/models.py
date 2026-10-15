@@ -33,6 +33,17 @@ def baseline_logit(df: pd.DataFrame) -> np.ndarray:
     return np.log(p / (1 - p))
 
 
+def decay_weights(index: pd.DatetimeIndex, half_life_days: float | None) -> np.ndarray | None:
+    """Sample weights halving every `half_life_days`, counted back from the newest training row.
+
+    Only the training rows' own timestamps are used, so the weights carry no outside information.
+    """
+    if half_life_days is None:
+        return None
+    age_days = (index.max() - index) / pd.Timedelta(days=1)
+    return np.power(0.5, np.asarray(age_days, dtype=float) / half_life_days)
+
+
 def logistic_design(df: pd.DataFrame, use_baseline: bool = False) -> pd.DataFrame:
     """log1p of counts and durations, so that the log-odds respond to *relative* change in
     alert intensity, and that response keeps going beyond the range seen in training."""
@@ -53,13 +64,15 @@ def tree_design(df: pd.DataFrame, use_baseline: bool = False) -> pd.DataFrame:
 
 
 class LogisticRate:
-    def __init__(self, use_baseline: bool = False):
+    def __init__(self, use_baseline: bool = False, half_life_days: float | None = None):
         self.use_baseline = use_baseline
+        self.half_life_days = half_life_days
 
     def fit(self, train: pd.DataFrame):
         # The scaler is part of the pipeline, so its mean/std come from training rows only.
         self.pipe_ = make_pipeline(StandardScaler(), LogisticRegression(C=1.0, max_iter=2000))
-        self.pipe_.fit(logistic_design(train, self.use_baseline), train["y"])
+        w = decay_weights(train.index, self.half_life_days)
+        self.pipe_.fit(logistic_design(train, self.use_baseline), train["y"], logisticregression__sample_weight=w)
         return self
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
@@ -77,8 +90,9 @@ class LightGBM:
     Needs the OpenMP runtime on macOS (`brew install libomp`).
     """
 
-    def __init__(self, use_baseline: bool = False):
+    def __init__(self, use_baseline: bool = False, half_life_days: float | None = None):
         self.use_baseline = use_baseline
+        self.half_life_days = half_life_days
 
     def fit(self, train: pd.DataFrame):
         self.model_ = lgb.LGBMClassifier(
@@ -91,7 +105,8 @@ class LightGBM:
             n_jobs=1,  # deterministic results
             verbose=-1,
         )
-        self.model_.fit(tree_design(train, self.use_baseline), train["y"])
+        w = decay_weights(train.index, self.half_life_days)
+        self.model_.fit(tree_design(train, self.use_baseline), train["y"], sample_weight=w)
         return self
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
@@ -129,4 +144,11 @@ MODELS = {
     "sklearn_gbdt": BoostedTrees,
     "logistic+base": partial(LogisticRate, use_baseline=True),
     "lightgbm+base": partial(LightGBM, use_baseline=True),
+}
+
+# Time-decay variants, meant for walk-forward: half-lives fixed in advance, not tuned.
+DECAY_MODELS = {
+    f"{name}+decay{h}": partial(cls, half_life_days=h)
+    for h in (14, 60)
+    for name, cls in (("logistic", LogisticRate), ("lightgbm", LightGBM))
 }

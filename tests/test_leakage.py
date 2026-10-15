@@ -9,7 +9,7 @@ from air_alerts.data import build_episodes
 from air_alerts.dataset import build_dataset
 from air_alerts.features import FEATURE_COLUMNS, make_features
 from air_alerts.labels import forecast_times
-from air_alerts.models import MODELS
+from air_alerts.models import DECAY_MODELS, MODELS, decay_weights
 from air_alerts.walkforward import known_by, walk_forward_predict
 
 from .conftest import make_events
@@ -94,7 +94,7 @@ def test_walk_forward_history_has_only_observed_labels(dataset):
     assert hist.index.max() == day - config.HORIZON
 
 
-@pytest.mark.parametrize("name", ["logistic+base", "lightgbm+base"])
+@pytest.mark.parametrize("name", ["logistic+base", "lightgbm+base", "logistic+decay14", "lightgbm+decay14"])
 def test_walk_forward_ignores_labels_not_yet_observed(dataset, name):
     """Forecasts for day D must not change if every label not observed by D is flipped."""
     for day in (config.kyiv("2026-08-25"), config.kyiv("2026-09-10")):
@@ -102,7 +102,22 @@ def test_walk_forward_ignores_labels_not_yet_observed(dataset, name):
         scrambled = dataset.copy()
         unseen = scrambled.index + config.HORIZON > day
         scrambled.loc[unseen, "y"] = 1 - scrambled.loc[unseen, "y"]
-        p1 = walk_forward_predict(dataset, MODELS[name], day, end)
-        p2 = walk_forward_predict(scrambled, MODELS[name], day, end)
+        factory = {**MODELS, **DECAY_MODELS}[name]
+        p1 = walk_forward_predict(dataset, factory, day, end)
+        p2 = walk_forward_predict(scrambled, factory, day, end)
         assert len(p1) == 24
         np.testing.assert_allclose(p1, p2)
+
+
+def test_decay_weights_halve_every_half_life():
+    idx = pd.DatetimeIndex(pd.to_datetime(["2026-08-01", "2026-08-15", "2026-08-29"], utc=True))
+    np.testing.assert_allclose(decay_weights(idx, 14), [0.25, 0.5, 1.0])
+    assert decay_weights(idx, None) is None
+
+
+def test_decay_weights_depend_only_on_training_rows(dataset):
+    """Weights are relative to the newest training row, so adding later rows elsewhere in the
+    frame (e.g. the evaluated day) cannot change them."""
+    day = config.kyiv("2026-09-01")
+    hist = known_by(dataset, day)
+    np.testing.assert_allclose(decay_weights(hist.index, 14), decay_weights(known_by(dataset.iloc[: len(hist) + 500], day).index, 14))

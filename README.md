@@ -39,5 +39,5 @@ tests/          data, label and leakage tests
 - [x] Data loading, labeling, leakage tests, baselines
 - [x] First models (logistic regression, gradient boosting) — both lose to the 24h baseline, see DECISIONS.md
 - [x] Walk-forward daily retraining; baseline log-odds as a feature — helps, still below the 24h baseline
-- [ ] Weight recent data (time-decay or short window)
+- [x] Time-decay weights (14d / 60d): logistic reaches BSS +0.06, still below the 24h baseline
 - [ ] One-time evaluation on the test period
