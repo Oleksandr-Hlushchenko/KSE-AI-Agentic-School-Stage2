@@ -1,7 +1,9 @@
 """Forecast for a single moment: P(a new alert starts in Kyiv within the next 3 hours).
 
-Uses the final model chosen on validation and confirmed on test: logistic regression with
-14-day time-decay weights. It follows the evaluated walk-forward protocol exactly: the model is
+Uses logistic regression with 14-day time-decay weights. Note on how it was chosen: the
+pre-registered primary forecaster was the 24h baseline (best on validation); this model was the
+best learned comparator and did best on the one-time test. Using it here was decided after that
+test, so no untouched evaluation of this choice exists. It follows the evaluated walk-forward protocol exactly: the model is
 fit on every label observed by the most recent Kyiv midnight, and only the features use events
 up to the forecast time. tests/test_predict.py checks that on-the-hour forecasts reproduce the
 walk-forward evaluation. The event log is cut at the forecast time first, so a replay of a past

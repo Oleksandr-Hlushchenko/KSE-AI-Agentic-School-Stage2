@@ -2,8 +2,9 @@
 the last good copy.
 
 The cache is a single JSON file holding the raw response together with its retrieval time and
-sha256, replaced atomically. The response is fully parsed before it is written, so a bad
-download never overwrites a usable cache, and the payload and its metadata can't get out of step.
+sha256, replaced atomically. The response is fully parsed and checked for coverage before it is
+written, so a bad or partial download never overwrites a usable cache, and the payload and its
+metadata can't get out of step.
 """
 import hashlib
 import json
@@ -16,15 +17,64 @@ import certifi
 import pandas as pd
 
 from . import config
-from .data import load_events, parse_events
+from .data import build_episodes, load_events, parse_events
+from .labels import forecast_times, label_new_start
 
 CACHE_VERSION = 1
 # Allowed clock difference when checking that a cache wasn't written "in the future".
 CLOCK_SLACK = pd.Timedelta(minutes=5)
 
 
+# Features look back up to 7 days from the first training row.
+FEATURE_LOOKBACK = pd.Timedelta(days=7)
+# Share of the pinned snapshot's starts and all-clears a new history must still contain.
+MIN_SNAPSHOT_OVERLAP = 0.99
+# Allowed share of events since the training start that break start/all-clear pairing.
+# The pinned snapshot has none; its 53 known gaps are all in 2022, before the training start.
+MAX_ANOMALY_SHARE = 0.01
+
+
 class CacheError(Exception):
     """The cached download exists but can't be trusted."""
+
+
+def check_coverage(events: pd.DataFrame) -> None:
+    """Raise ValueError unless `events` is a full history the model can train on.
+
+    A missing stretch of history is not "no alerts": it would turn into negative labels, and
+    missing all-clears would merge many alerts into one that never ends. So the log must:
+    - reach back before the training start (minus the 7-day feature window);
+    - still contain the pinned snapshot's alert starts *and* all-clears over the snapshot's
+      period (the API history only grows; two downloads 3.5 hours apart matched exactly);
+    - pair starts with all-clears since the training start, apart from a few gaps (a final
+      open alert is fine, and the known 2022 gaps are before the training start);
+    - give both outcomes, "new alert within 3h" and "none", as training labels.
+    """
+    earliest = config.DATA_START - FEATURE_LOOKBACK
+    if events.empty or events["t"].min() > earliest:
+        first = "nothing" if events.empty else events["t"].min()
+        raise ValueError(f"history starts at {first}, needs events from before {earliest}")
+
+    pinned = load_events(cutoff=None)
+    in_pinned = (pinned["t"] >= config.DATA_START) & (pinned["t"] < config.RAW_RETRIEVED_AT)
+    in_events = (events["t"] >= config.DATA_START) & (events["t"] < config.RAW_RETRIEVED_AT)
+    for state, name in ((1, "alert starts"), (0, "all-clears")):
+        expected = int((pinned.loc[in_pinned, "state"] == state).sum())
+        found = int((events.loc[in_events, "state"] == state).sum())
+        if found < MIN_SNAPSHOT_OVERLAP * expected:
+            raise ValueError(f"history has {found} {name} in {config.DATA_START:%Y-%m-%d}.."
+                             f"{config.RAW_RETRIEVED_AT:%Y-%m-%d}, the pinned snapshot has {expected}")
+
+    episodes, anomalies = build_episodes(events)
+    recent_events = int((events["t"] >= config.DATA_START).sum())
+    recent_anomalies = int((anomalies["t"] >= config.DATA_START).sum()) if len(anomalies) else 0
+    if recent_anomalies > MAX_ANOMALY_SHARE * recent_events:
+        raise ValueError(f"{recent_anomalies} of {recent_events} events since {config.DATA_START:%Y-%m-%d} "
+                         "break start/all-clear pairing")
+
+    labels = label_new_start(forecast_times(config.DATA_START, events["t"].max()), episodes["start"])
+    if labels.all() or not labels.any():
+        raise ValueError("history yields only one outcome class for training")
 
 
 def download(url: str = config.HISTORY_URL, timeout: float = 30) -> bytes:
@@ -38,6 +88,7 @@ def download(url: str = config.HISTORY_URL, timeout: float = 30) -> bytes:
 def save_cache(raw: bytes, fetched_at: pd.Timestamp, dest: Path = config.LIVE_CACHE, url: str = config.HISTORY_URL) -> pd.DataFrame:
     """Validate `raw`, then atomically replace the cache. Returns the parsed events."""
     events = parse_events(raw)  # raises before anything is written
+    check_coverage(events)
     envelope = {
         "version": CACHE_VERSION,
         "source_url": url,
@@ -73,7 +124,9 @@ def load_cache(path: Path = config.LIVE_CACHE) -> tuple[pd.DataFrame, pd.Timesta
         fetched_at = pd.Timestamp(envelope["fetched_at_utc"])
         if fetched_at.tzinfo is None or fetched_at > pd.Timestamp.now(tz="UTC") + CLOCK_SLACK:
             raise ValueError(f"implausible retrieval time {envelope['fetched_at_utc']!r}")
-        return parse_events(raw), fetched_at.tz_convert("UTC")
+        events = parse_events(raw)
+        check_coverage(events)
+        return events, fetched_at.tz_convert("UTC")
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise CacheError(f"{path}: {exc}") from exc
 

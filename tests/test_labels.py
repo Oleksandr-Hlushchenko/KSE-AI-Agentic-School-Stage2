@@ -46,3 +46,23 @@ def test_split_purges_windows_crossing_boundaries():
     order = {"train": 0, "val": 1, "test": 2}
     ranks = [order[s] for s in split if s != "purged"]
     assert ranks == sorted(ranks)
+
+
+def test_build_dataset_loads_events_for_the_requested_cutoff():
+    """Regression: an extended cutoff used to be labelled from a log already cut at config.CUTOFF."""
+    from air_alerts.data import load_events
+    from air_alerts.dataset import build_dataset
+
+    cutoff = config.kyiv("2026-10-15 19:00")
+    implicit = build_dataset(cutoff=cutoff)
+    explicit = build_dataset(load_events(cutoff=None), cutoff=cutoff)
+    assert implicit.index.max() + config.HORIZON == cutoff
+    pd.testing.assert_frame_equal(implicit, explicit)
+
+
+def test_build_dataset_refuses_cutoff_beyond_snapshot():
+    import pytest
+    from air_alerts.dataset import build_dataset
+
+    with pytest.raises(ValueError, match="after the pinned snapshot"):
+        build_dataset(cutoff=config.kyiv("2026-10-16 12:00"))

@@ -1,7 +1,8 @@
 """Learned models with the same fit/predict interface as the baselines.
 
-Hyperparameters are fixed up front, not tuned on validation: there are only 574 validation
-hours, and tuning on them would turn validation into training data.
+Hyperparameters are fixed up front rather than searched. Choosing among a few declared options
+on validation is what validation is for, but with only 574 validation hours an extensive search
+would mostly fit their noise.
 """
 from functools import partial
 

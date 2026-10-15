@@ -18,29 +18,51 @@ def load_raw(path: Path = config.RAW_JSON, sha256: str | None = config.RAW_SHA25
     return raw
 
 
-def kyiv_local_to_utc(local: pd.Series) -> pd.Series:
-    """Convert offset-less Kyiv wall-clock strings to UTC.
+def localize_kyiv(local: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Convert offset-less Kyiv wall-clock strings, given in chronological order, to UTC.
 
-    Spring-forward gaps cannot occur in real data, but are shifted forward to be safe.
-    In the repeated autumn hour the first occurrence (summer time) is assumed unless that
-    would put the event before the previous one; `local` must be sorted.
+    When clocks go back, 03:00-04:00 happens twice and the string alone can't say which pass an
+    event belongs to; the order of events can. An event in that hour is placed in the first
+    (summer-time) pass unless that would put it before the previous event: so a start at 03:50
+    followed by an end at 03:10 becomes 00:50 -> 01:10 UTC. Where both passes fit between the
+    neighbouring events, the order can't decide; the first pass is assumed and the event is
+    flagged in the second return value. Spring-forward gaps can't occur in real data and are
+    shifted forward to be safe.
     """
     naive = pd.to_datetime(local, format="%Y-%m-%d %H:%M:%S")
     utc = (
         naive.dt.tz_localize(config.TZ, ambiguous="NaT", nonexistent="shift_forward")
         .dt.tz_convert("UTC")
     )
-    for i in np.flatnonzero(utc.isna().to_numpy()):
+    ambiguous = np.flatnonzero(utc.isna().to_numpy())
+    options = {}
+    for i in ambiguous:
         early = naive.iloc[i].tz_localize(config.TZ, ambiguous=True).tz_convert("UTC")
         late = naive.iloc[i].tz_localize(config.TZ, ambiguous=False).tz_convert("UTC")
         prev = utc.iloc[i - 1] if i > 0 else pd.NaT
         utc.iloc[i] = late if pd.notna(prev) and early < prev else early
-    return utc
+        options[i] = (early, late)
+
+    assumed = pd.Series(False, index=local.index)
+    for i, (early, late) in options.items():
+        prev = utc.iloc[i - 1] if i > 0 else pd.NaT
+        nxt = utc.iloc[i + 1] if i + 1 < len(utc) else pd.NaT
+
+        def fits(x):
+            return (pd.isna(prev) or x >= prev) and (pd.isna(nxt) or x <= nxt)
+        assumed.iloc[i] = bool(fits(early) and fits(late))
+    return utc, assumed
+
+
+def kyiv_local_to_utc(local: pd.Series) -> pd.Series:
+    return localize_kyiv(local)[0]
 
 
 def parse_events(raw: bytes, cutoff: pd.Timestamp | None = None) -> pd.DataFrame:
-    """Start (state=1) / end (state=0) events with UTC time `t`, sorted, strictly before `cutoff`
-    (no cutoff if None, for live data). Raises ValueError on anything the pipeline can't use.
+    """Start (state=1) / end (state=0) events with UTC time `t`, in time order, strictly before
+    `cutoff` (no cutoff if None, for live data). Raises ValueError on anything the pipeline can't
+    use. `dst_assumed` marks events whose pass through the repeated autumn hour was assumed (see
+    localize_kyiv).
 
     `causes` is kept for after-the-fact analysis only. It must never become a model input:
     the API rewrites a start record's threat types later in the alert (observed: the 19:24 start on
@@ -59,15 +81,20 @@ def parse_events(raw: bytes, cutoff: pd.Timestamp | None = None) -> pd.DataFrame
             raise ValueError(f"malformed event: {item!r}")
 
     df = pd.DataFrame(items).reindex(columns=["created_at", "state", "causes"])
-    # "YYYY-mm-dd HH:MM:SS" sorts chronologically as a string; the strict format in
-    # kyiv_local_to_utc rejects anything else.
-    df = df.sort_values("created_at", kind="stable").reset_index(drop=True)
-    df["t"] = kyiv_local_to_utc(df["created_at"])
+    # The API lists events newest first (all 5,386 events of the snapshot, no exception). That
+    # order, not sorting the clock strings, is what tells the two passes through the repeated
+    # autumn hour apart, so it is kept, reversed. The order can't be inferred from the strings
+    # themselves (two events inside the repeated hour look the same either way), so any other
+    # order fails the time-order check below instead of being guessed.
+    df = df.iloc[::-1].reset_index(drop=True)
+    df["t"], df["dst_assumed"] = localize_kyiv(df["created_at"])  # strict format: raises on bad strings
     if df["t"].isna().any():
         raise ValueError("unparseable created_at")
+    if not df["t"].is_monotonic_increasing:
+        raise ValueError("events are not in a consistent time order")
     if cutoff is not None:
         df = df[df["t"] < cutoff.tz_convert("UTC")].reset_index(drop=True)
-    return df[["t", "state", "causes", "created_at"]]
+    return df[["t", "state", "causes", "created_at", "dst_assumed"]]
 
 
 def load_events(

@@ -14,7 +14,7 @@ Short record of what was decided, why, and what evidence it rests on. Dates are 
 - Considered and rejected as model inputs:
   - *Vadimkin official CSV* — the same feed (99.7% of Kyiv starts match within 5 min, 2 s apart), but it stops on 2026-09-07 (repo issues #6, #7). It also has 38% exact duplicate rows and mixes hromada-level records.
   - *Vadimkin volunteer CSV* — current, but for Kyiv only 71–74% of starts match the official feed since 2023, and 25–38% after 2026-09-07. 220 Kyiv end times are imputed (+30 min).
-- **Time zone:** `created_at` has no offset. Matching starts against UTC sources: Europe/Kyiv with DST matches 66–67% in both summer and winter; fixed UTC+2/+3 fail in one season each, UTC fails always. The repeated autumn hour is resolved by keeping the log ordered (one event affected).
+- **Time zone:** `created_at` has no offset. Matching starts against UTC sources: Europe/Kyiv with DST matches 66–67% in both summer and winter; fixed UTC+2/+3 fail in one season each, UTC fails always. For the repeated autumn hour, see "Changes after the full project review" below.
 
 ## Cleaning
 - Data from **2023-01-01**: all 53 sequence anomalies (47 repeated starts, 6 repeated ends) are in 2022. Since 2023 starts and ends alternate perfectly, so no end-time repair is needed. 2022 events are still used as feature history for early 2023.
@@ -22,7 +22,7 @@ Short record of what was decided, why, and what evidence it rests on. Dates are 
 
 ## The September 2026 change
 - From 2026-09-06 06:00 Kyiv uses yellow (drone) / red (missile, massive drone) levels (kyivcity.gov.ua, 6 and 8 Sep). An episode still runs from the first threat until a single all-clear, and there is no all-clear between threat types. **The episode definition is unchanged**, so the target means the same before and after.
-- The alert rate jumped on **2026-08-24, two weeks before the new format** (1.7 → 7.6 starts/day). That is real escalation, not an artifact of the new levels.
+- The rate of recorded alert starts jumped on **2026-08-24, two weeks before the new format** (1.7 → 7.6 starts/day), so it is not an artifact of the new levels. Reading it as an escalation of attacks is an interpretation, consistent with the city's own statement about a "deterioration of the security situation" (8 Sep). The log alone doesn't prove the cause. "Escalation" below is shorthand for this high-rate period.
 - **`causes` is never a model input.** It exists only from 2026-09-07, and start records carry several threat types at once (e.g. drone+missile+massive-drone). Most likely they were filled in after the start. Allowed only for slicing evaluation after the fact.
 
 ## Evaluation protocol
@@ -107,7 +107,7 @@ Test period: forecasts issued 2026-09-17 00:00 → 2026-10-14 21:00 Kyiv. It is 
 | **logistic, walk-forward, 14-day decay** | **+0.044 / +0.024** | **0.587** | **0.64** / 0.65 | 0.67 |
 
 - **The pre-registered primary lost.** Validation picked the 24h baseline. On test it is worse than a constant at the period's base rate, and it barely ranks hours (AUC 0.54).
-- **The best learned model won on test**, and robustly: its Brier improvement over the baseline is +0.031, with a 95% day-block bootstrap CI of [+0.016, +0.047] over 28 days. It beats the baseline in all 4 weeks. Its improvement over walk-forward LightGBM is +0.010, CI [+0.000, +0.019].
+- **The best learned model won on test**: its Brier improvement over the baseline is +0.031, with a 95% day-block bootstrap CI of [+0.016, +0.047]. It beats the baseline in all 4 weeks. Its improvement over walk-forward LightGBM is +0.010, CI [+0.000, +0.019]. Reproduce with `scripts/analyze_test.py` (whole days resampled, 2000 reps, seed 0). The interval only covers uncertainty over *these* 28 days, not performance under a future regime.
 - **Why the baseline broke:** its Poisson mapping from counts to probability is fixed. In the test period alerts are almost continuous, so the count no longer separates hours: with ≤ 4 starts in 24h, 57–83% of hours were still followed by a start. It also underpredicts the level (0.59 vs 0.70), especially in calm hours (0.58 vs 0.77). In calm hours a new start is *more* likely than during an alert (0.77 vs 0.59), because a new start can only follow an all-clear. The baseline cannot represent that.
 - **Why the decay model wins:** it learns from recent *outcomes*, not only counts. Every day it refits the level and the role of `active_now` / time since the last all-clear on roughly the last 2 weeks. On validation this was hidden because the escalation had just begun (0–1.2% of the training rows); by the test period it had 3+ weeks of escalation to learn from.
 - **Absolute skill is small** (BSS +0.04, AUC 0.64). In this regime, forecasting 3h onsets is mostly about getting the level right; ranking individual hours remains hard.
@@ -126,3 +126,22 @@ All three findings were verified and accepted:
 2. *Cache JSON and metadata were separate files, and the hash was never checked.* Now one file holds the response, retrieval time, sha256 and format version, replaced atomically. Any problem (hash mismatch, missing or naive or future timestamp, garbage, truncation) → warning and fallback to the pinned snapshot. 17 regression tests cover this.
 3. *The live script refit at every run, but the metrics came from a daily midnight refit with on-the-hour forecasts.* Now live forecasting uses the evaluated protocol: fit on labels known at the latest Kyiv midnight. A test checks that on-the-hour live forecasts equal the walk-forward predictions to 1e-9. For off-the-hour use, `scripts/check_minute_offsets.py` moves each test forecast to a random minute (seed 0) with nothing else changed: Brier skill +0.051 vs +0.044 on the hour, ROC-AUC 0.65 vs 0.64. No setting was chosen from this check; it only decides what the printed text may claim.
 - Mutation checks: undoing each fix in a scratch copy makes the new tests fail (8, 2 and 2 failures).
+
+## Changes after the full project review (ChatGPT, revision 9b1ed27)
+All four findings were reproduced and fixed; pinned-snapshot event times are unchanged (all 5,386 compared), so no reported metric moved.
+1. **Repeated autumn hour.** The parser used to sort offset-less clock strings, which loses the order of the two passes through 03:00–04:00. A start at 03:50 (first pass) and an end at 03:10 (second pass) became an end before a start. Now the API's own newest-first order is kept (verified: no exception in 5,386 events). An event is placed in the second pass only when the first would put it before the previous event, and any remaining inconsistency is rejected instead of patched. Events the order can't decide are flagged `dst_assumed`. The snapshot has exactly one: the all-clear at 2025-10-26 03:05:12 (alert started 02:27). The official feed records that alert as 23:27:02 → **00:05:17 UTC**, i.e. the first pass, which matches the assumption. That is the only independent evidence for it.
+2. **Partial histories.** A well-formed but partial response (e.g. one all-clear) used to replace the cache, then crashed the forecast. Missing history must not be read as "no alerts", because it becomes negative labels. Now `check_coverage` runs before a download replaces the cache and when the cache is loaded. The history must reach back before 2022-12-25 (training start minus the 7-day feature window), and it must contain ≥ 99% of the pinned snapshot's alert starts over the snapshot's period. Tests cover end-only, recent-only and 5%-of-starts-missing payloads.
+   - *Follow-up review:* a history with every all-clear removed still passed (2,713 starts), merged into one never-ending alert, replaced the cache, and then failed to train (one class). The check now also requires:
+     - ≥ 99% of the snapshot's **all-clears**;
+     - start/all-clear **pairing** since the training start: at most 1% of events may be gaps (the snapshot has 0; its 53 gaps are in 2022, and a final open alert is fine);
+     - **both outcome classes** in the 3h labels.
+
+     Tests cover starts-only (the cache is preserved and the fallback forecast works), 5% of all-clears lost, and about 2.5% broken pairing; each is rejected by the intended check. The pairing check also catches every missing-all-clear case, so the all-clear count is redundant (kept for its clearer message). The class check is a last-resort guard that no realistic test payload reaches.
+3. **`build_dataset(cutoff=...)` without events** loaded the snapshot cut at the default cutoff, then labelled later rows from that truncated log: 17 rows, 12 wrong labels for a 19:00 cutoff. Now it loads the events needed for the requested cutoff, and refuses a cutoff after the snapshot's retrieval time.
+4. **Python version.** `numpy==2.5.4` requires Python ≥ 3.12, so the project now declares `>=3.12` (was 3.11). Dependencies are unchanged.
+
+Reporting fixes:
+- The live model is described as the best learned comparator chosen *after* the test, not as the pre-registered primary.
+- The bootstrap interval is reproducible from `scripts/analyze_test.py` and labelled as covering only these 28 days.
+- The 24 Aug rise is described as a rise in recorded alert starts, with "escalation" as a labelled interpretation.
+- Validation selection is described correctly in `models.py`.

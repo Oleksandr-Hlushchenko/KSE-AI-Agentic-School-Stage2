@@ -30,9 +30,10 @@ P(new alert starts within 3 hours) with the current status and the baseline for 
 offset; they are converted to UTC with DST handling. The loader checks the file's sha256.
 
 ## Setup and run
-On macOS LightGBM needs the OpenMP runtime first: `brew install libomp`.
+Requires **Python 3.12 or later** (the pinned numpy 2.5.4 does not support 3.11; results were
+produced with 3.12.10). On macOS LightGBM also needs the OpenMP runtime: `brew install libomp`.
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m pytest              # data, labeling and leakage tests
 .venv/bin/python scripts/run_eval.py   # baselines + models on the validation period
 ```
@@ -52,15 +53,19 @@ src/air_alerts/
   predict.py    forecast at any moment with the final model (daily midnight refit)
 scripts/predict.py
 scripts/check_minute_offsets.py   off-the-hour forecasts vs on-the-hour, test period
+scripts/analyze_test.py           bootstrap CI and breakdowns for the test result
 scripts/run_eval.py
 tests/          data, label and leakage tests
 ```
 
 ## Result (test, 17 Sep – 14 Oct 2026, scored once)
-Best: **walk-forward logistic regression with 14-day time-decay weights**: Brier skill +0.04 vs the period's base rate, log loss 0.587, ROC-AUC 0.64. It beats the 24h recent-rate baseline (Brier skill −0.10) in all 4 weeks; bootstrap 95% CI for the Brier gain [+0.016, +0.047]. The baseline had been chosen as primary on validation, before the test was scored. The full story is in [DECISIONS.md](DECISIONS.md).
+Best: **walk-forward logistic regression with 14-day time-decay weights**: Brier skill +0.04 vs the period's base rate, log loss 0.587, ROC-AUC 0.64. It beats the 24h recent-rate baseline (Brier skill −0.10) in all 4 weeks; day-block bootstrap 95% CI for the Brier gain [+0.016, +0.047], which covers only these 28 days.
+
+**The pre-registered primary was the baseline** (best on validation), and it lost on test. The logistic model was the best learned comparator. `scripts/predict.py` uses it, a choice made after the test, so that choice has no untouched evaluation. The full story is in [DECISIONS.md](DECISIONS.md).
 
 ```bash
 .venv/bin/python scripts/run_eval.py --test   # scores the frozen final set on the test period
+.venv/bin/python scripts/analyze_test.py      # bootstrap CI, weekly skill, calibration by activity
 ```
 
 ## Status
