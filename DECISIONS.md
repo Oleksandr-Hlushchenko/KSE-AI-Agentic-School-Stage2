@@ -112,3 +112,17 @@ Test period: forecasts issued 2026-09-17 00:00 → 2026-10-14 21:00 Kyiv. It is 
 - **Why the decay model wins:** it learns from recent *outcomes*, not only counts. Every day it refits the level and the role of `active_now` / time since the last all-clear on roughly the last 2 weeks. On validation this was hidden because the escalation had just begun (0–1.2% of the training rows); by the test period it had 3+ weeks of escalation to learn from.
 - **Absolute skill is small** (BSS +0.04, AUC 0.64). In this regime, forecasting 3h onsets is mostly about getting the level right; ranking individual hours remains hard.
 - Post-hoc analysis above is descriptive only; no model was changed after scoring the test.
+
+## Live forecasting (`scripts/predict.py`)
+- **The API rewriting `causes` is now confirmed, not just likely.** A second download at 23:30 on 2026-10-15 showed the 19:24 start changed from `["drone"]` to `["drone", "missile"]`. No start or end timestamps changed between the two downloads.
+- The history endpoint is public, returns the full history since Feb 2022, and needs no token.
+- Live data goes to `data/live/` (git-ignored). Evaluation keeps using the sha256-pinned snapshot.
+- **Stale data is not presented as "now".** A first run fell back to the 20:00 snapshot at 23:32 and reported "ALERT ACTIVE for 248 min", but that alert had ended at 22:45 and a new one had started at 23:02. Without a successful download, the forecast is now issued as of the download time, with a warning.
+- HTTPS uses `certifi`'s CA bundle: python.org Python on macOS ships without root certificates. Verification stays on.
+
+### Changes after an external review (ChatGPT-6.1 Sol) of the first version
+All three findings were verified and accepted:
+1. *A payload with a bad timestamp passed validation, replaced the cache, and then broke the fallback too.* Now `parse_events` validates every event (strict timestamp format, state ∈ {0,1}) before anything is written. A failed download keeps the last good copy.
+2. *Cache JSON and metadata were separate files, and the hash was never checked.* Now one file holds the response, retrieval time, sha256 and format version, replaced atomically. Any problem (hash mismatch, missing or naive or future timestamp, garbage, truncation) → warning and fallback to the pinned snapshot. 17 regression tests cover this.
+3. *The live script refit at every run, but the metrics came from a daily midnight refit with on-the-hour forecasts.* Now live forecasting uses the evaluated protocol: fit on labels known at the latest Kyiv midnight. A test checks that on-the-hour live forecasts equal the walk-forward predictions to 1e-9. For off-the-hour use, `scripts/check_minute_offsets.py` moves each test forecast to a random minute (seed 0) with nothing else changed: Brier skill +0.051 vs +0.044 on the hour, ROC-AUC 0.65 vs 0.64. No setting was chosen from this check; it only decides what the printed text may claim.
+- Mutation checks: undoing each fix in a scratch copy makes the new tests fail (8, 2 and 2 failures).

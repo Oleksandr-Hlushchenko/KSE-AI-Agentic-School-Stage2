@@ -6,6 +6,23 @@ published before that moment.
 
 Why this target and source, and what was rejected, is in [DECISIONS.md](DECISIONS.md).
 
+## Get a forecast
+```bash
+.venv/bin/python scripts/predict.py                          # download fresh data, forecast for now
+.venv/bin/python scripts/predict.py --offline                # no download: forecast as of the last download
+.venv/bin/python scripts/predict.py --at "2026-10-10 18:00"  # replay a past moment (Kyiv time)
+```
+The script downloads the full public history from Kyiv Digital (no token needed) and prints
+P(new alert starts within 3 hours) with the current status and the baseline for comparison.
+- **Same procedure as evaluated:** the model is fit on outcomes known at the latest Kyiv midnight
+  (the walk-forward protocol); only the features use events up to the forecast minute. A test
+  checks that on-the-hour live forecasts equal the walk-forward predictions.
+- **Cache:** a download is fully parsed before it replaces `data/live/history_cache.json`
+  (git-ignored; one file with response, retrieval time and sha256). A bad download keeps the last
+  good copy; an unusable cache falls back to the pinned snapshot, with a warning.
+- **Stale data is not presented as "now":** without a fresh download the forecast is issued as
+  of the retrieval time, because the alert status after that is unknown.
+
 ## Data
 `data/raw/kyiv_digital/history_2026-10-15.json` — snapshot of the official
 [Kyiv Digital air-alert history API](https://kyiv.digital/open-api/air-alert/history), with start (`state=1`) and end
@@ -31,6 +48,10 @@ src/air_alerts/
   models.py     logistic regression, LightGBM, sklearn gradient boosting
   evaluate.py   Brier / log loss / ROC-AUC / PR-AUC, all hours and calm hours
   walkforward.py  daily refit on labels observed so far
+  fetch.py      download, validated single-file cache, fallback to the pinned snapshot
+  predict.py    forecast at any moment with the final model (daily midnight refit)
+scripts/predict.py
+scripts/check_minute_offsets.py   off-the-hour forecasts vs on-the-hour, test period
 scripts/run_eval.py
 tests/          data, label and leakage tests
 ```

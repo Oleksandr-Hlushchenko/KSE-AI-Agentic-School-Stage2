@@ -9,13 +9,13 @@ import pandas as pd
 from . import config
 
 
-def load_raw(path: Path = config.RAW_JSON, sha256: str | None = config.RAW_SHA256) -> pd.DataFrame:
+def load_raw(path: Path = config.RAW_JSON, sha256: str | None = config.RAW_SHA256) -> bytes:
     raw = Path(path).read_bytes()
     if sha256 is not None:
         digest = hashlib.sha256(raw).hexdigest()
         if digest != sha256:
             raise ValueError(f"{path}: sha256 {digest} does not match the pinned snapshot {sha256}")
-    return pd.DataFrame(json.loads(raw)["items"], columns=["created_at", "state", "causes"])
+    return raw
 
 
 def kyiv_local_to_utc(local: pd.Series) -> pd.Series:
@@ -38,22 +38,44 @@ def kyiv_local_to_utc(local: pd.Series) -> pd.Series:
     return utc
 
 
+def parse_events(raw: bytes, cutoff: pd.Timestamp | None = None) -> pd.DataFrame:
+    """Start (state=1) / end (state=0) events with UTC time `t`, sorted, strictly before `cutoff`
+    (no cutoff if None, for live data). Raises ValueError on anything the pipeline can't use.
+
+    `causes` is kept for after-the-fact analysis only. It must never become a model input:
+    the API rewrites a start record's threat types later in the alert (observed: the 19:24 start on
+    2026-10-15 read ["drone"] at 20:00 and ["drone", "missile"] at 23:30).
+    """
+    try:
+        items = json.loads(raw)["items"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"not an alert-history response: {exc!r}") from exc
+    if not isinstance(items, list) or not items:
+        raise ValueError("alert history has no events")
+    for item in items:
+        if not isinstance(item, dict) or not {"state", "created_at"} <= set(item):
+            raise ValueError(f"event without state/created_at: {item!r}")
+        if item["state"] not in (0, 1) or isinstance(item["state"], bool) or not isinstance(item["created_at"], str):
+            raise ValueError(f"malformed event: {item!r}")
+
+    df = pd.DataFrame(items).reindex(columns=["created_at", "state", "causes"])
+    # "YYYY-mm-dd HH:MM:SS" sorts chronologically as a string; the strict format in
+    # kyiv_local_to_utc rejects anything else.
+    df = df.sort_values("created_at", kind="stable").reset_index(drop=True)
+    df["t"] = kyiv_local_to_utc(df["created_at"])
+    if df["t"].isna().any():
+        raise ValueError("unparseable created_at")
+    if cutoff is not None:
+        df = df[df["t"] < cutoff.tz_convert("UTC")].reset_index(drop=True)
+    return df[["t", "state", "causes", "created_at"]]
+
+
 def load_events(
     path: Path = config.RAW_JSON,
     sha256: str | None = config.RAW_SHA256,
-    cutoff: pd.Timestamp = config.CUTOFF,
+    cutoff: pd.Timestamp | None = config.CUTOFF,
 ) -> pd.DataFrame:
-    """Start (state=1) / end (state=0) events with UTC time `t`, sorted, strictly before `cutoff`.
-
-    `causes` is kept for after-the-fact analysis only. It must never become a model input:
-    start records carry threat types that were most likely added later in the alert.
-    """
-    df = load_raw(path, sha256)
-    # "YYYY-mm-dd HH:MM:SS" sorts chronologically as a string.
-    df = df.sort_values("created_at", kind="stable").reset_index(drop=True)
-    df["t"] = kyiv_local_to_utc(df["created_at"])
-    df = df[df["t"] < cutoff.tz_convert("UTC")].reset_index(drop=True)
-    return df[["t", "state", "causes", "created_at"]]
+    return parse_events(load_raw(path, sha256), cutoff)
 
 
 def build_episodes(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

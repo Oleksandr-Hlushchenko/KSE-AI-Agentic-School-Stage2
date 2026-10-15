@@ -2,4 +2,5 @@ numpy==2.5.4
 pandas==3.0.6
 scikit-learn==1.9.1
 lightgbm==4.7.0
+certifi==2026.7.22
 pytest==9.1.1

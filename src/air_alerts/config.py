@@ -12,6 +12,12 @@ ROOT = Path(__file__).resolve().parents[2]
 # The hash pins the exact bytes we analysed; loading fails if the file changes.
 RAW_JSON = ROOT / "data" / "raw" / "kyiv_digital" / "history_2026-10-15.json"
 RAW_SHA256 = "417e4024d258163c9ead52f80542d2566da0ea0a700bba70d933bbd616df1b3d"
+RAW_RETRIEVED_AT = pd.Timestamp("2026-10-15 19:59", tz="Europe/Kyiv")  # file time of the download
+
+# Live data for scripts/predict.py. Kept apart from the pinned snapshot (and out of git)
+# so that evaluation stays reproducible.
+HISTORY_URL = "https://kyiv.digital/open-api/air-alert/history"
+LIVE_CACHE = ROOT / "data" / "live" / "history_cache.json"
 
 # created_at in the API has no offset; it is Kyiv local time with DST (see DECISIONS.md).
 TZ = "Europe/Kyiv"
