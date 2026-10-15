@@ -9,6 +9,7 @@ from air_alerts.data import build_episodes
 from air_alerts.dataset import build_dataset
 from air_alerts.features import FEATURE_COLUMNS, make_features
 from air_alerts.labels import forecast_times
+from air_alerts.models import MODELS
 
 from .conftest import make_events
 
@@ -68,14 +69,17 @@ def dataset(events):
     return build_dataset(events)
 
 
-@pytest.mark.parametrize("name", list(BASELINES))
-def test_baselines_ignore_labels_outside_training_rows(dataset, name):
+FORECASTERS = {**BASELINES, **MODELS}
+
+
+@pytest.mark.parametrize("name", list(FORECASTERS))
+def test_forecasters_ignore_labels_outside_training_rows(dataset, name):
     """Fitting on train must not depend on val/test labels: scramble them and predict again."""
     train = dataset[dataset["split"] == "train"]
     scrambled = dataset.copy()
     other = scrambled["split"] != "train"
     scrambled.loc[other, "y"] = 1 - scrambled.loc[other, "y"]
 
-    p1 = BASELINES[name]().fit(train).predict(dataset)
-    p2 = BASELINES[name]().fit(scrambled[scrambled["split"] == "train"]).predict(scrambled)
+    p1 = FORECASTERS[name]().fit(train).predict(dataset)
+    p2 = FORECASTERS[name]().fit(scrambled[scrambled["split"] == "train"]).predict(scrambled)
     np.testing.assert_allclose(p1, p2)

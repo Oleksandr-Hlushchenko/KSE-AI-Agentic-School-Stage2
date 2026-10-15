@@ -13,10 +13,11 @@ Why this target and source, and what was rejected, is in [DECISIONS.md](DECISION
 offset; they are converted to UTC with DST handling. The loader checks the file's sha256.
 
 ## Setup and run
+On macOS LightGBM needs the OpenMP runtime first: `brew install libomp`.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m pytest              # data, labeling and leakage tests
-.venv/bin/python scripts/run_baselines.py   # baselines on the validation period
+.venv/bin/python scripts/run_eval.py   # baselines + models on the validation period
 ```
 
 ## Layout
@@ -27,12 +28,14 @@ src/air_alerts/
   labels.py     hourly forecast grid, 3h target, train/val/test split with purging
   features.py   features computed only from events at or before t
   baselines.py  reference forecasters
+  models.py     logistic regression, LightGBM, sklearn gradient boosting
   evaluate.py   Brier / log loss / ROC-AUC / PR-AUC, all hours and calm hours
-scripts/run_baselines.py
+scripts/run_eval.py
 tests/          data, label and leakage tests
 ```
 
 ## Status
 - [x] Data loading, labeling, leakage tests, baselines
-- [ ] Model (logistic regression, gradient boosting)
+- [x] First models (logistic regression, gradient boosting) — both lose to the 24h baseline, see DECISIONS.md
+- [ ] Models that adapt to the escalation
 - [ ] One-time evaluation on the test period

@@ -1,7 +1,7 @@
-"""Score the baselines on validation (default) or, once, on test.
+"""Score baselines and models on validation (default) or, once, on test.
 
-    python scripts/run_baselines.py            # fit on train, score on val
-    python scripts/run_baselines.py --test     # fit on train+val, score on test
+    python scripts/run_eval.py            # fit on train, score on val
+    python scripts/run_eval.py --test     # fit on train+val, score on test
 
 The test period is meant to be looked at once, after all choices are made on validation.
 """
@@ -17,6 +17,7 @@ from air_alerts import config  # noqa: E402
 from air_alerts.baselines import BASELINES  # noqa: E402
 from air_alerts.dataset import build_dataset  # noqa: E402
 from air_alerts.evaluate import evaluate  # noqa: E402
+from air_alerts.models import MODELS  # noqa: E402
 
 
 def main() -> None:
@@ -30,7 +31,7 @@ def main() -> None:
     else:
         fit_on, target = df[df["split"] == "train"], df[df["split"] == "val"]
 
-    preds = {name: cls().fit(fit_on).predict(target) for name, cls in BASELINES.items()}
+    preds = {name: cls().fit(fit_on).predict(target) for name, cls in {**BASELINES, **MODELS}.items()}
     results = evaluate(target, preds)
 
     period = "test" if args.test else "val"
@@ -45,7 +46,7 @@ def main() -> None:
             print(f"\n[{name} hours]")
             print(part.drop(columns="slice").set_index("model").to_string())
 
-    out = config.ROOT / "reports" / f"baselines_{period}.csv"
+    out = config.ROOT / "reports" / f"eval_{period}.csv"
     out.parent.mkdir(exist_ok=True)
     results.to_csv(out, index=False)
     print(f"\nsaved {out.relative_to(config.ROOT)}")

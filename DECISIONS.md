@@ -39,3 +39,17 @@ Short record of what was decided, why, and what evidence it rests on. Dates are 
 ## Baseline findings (validation)
 - Base rate: train 0.148 → val 0.568 → test 0.701. Anything fitted to the training *level* fails: train base rate BSS −0.72, hour-of-day climatology −0.73.
 - Best baseline: **Poisson rate from starts in the last 24h** — BSS +0.15 (all hours) / +0.19 (calm), ROC-AUC 0.75 / 0.78. This is the bar a model must clear.
+
+## First models (validation, fixed hyperparameters, trained on 2023-01-01 → 2026-08-23)
+| model | BSS all / calm | ROC-AUC all / calm | mean p (base rate 0.568) |
+|---|---|---|---|
+| recent_rate_24h (baseline) | **+0.15 / +0.19** | **0.75 / 0.78** | 0.47 |
+| logistic (log-scaled features) | −0.22 / −0.16 | 0.63 / 0.68 | 0.31 |
+| LightGBM | −0.90 / −0.86 | 0.36 / 0.28 | 0.14 |
+| sklearn HistGradientBoosting (cross-check) | −0.87 / −0.82 | 0.37 / 0.32 | 0.14 |
+
+- LightGBM needs `brew install libomp` on macOS. sklearn's histogram GBDT, with the same settings, is kept as a cross-check, and it gives the same result, so this is not a LightGBM quirk.
+- **Why both lose:** what changed is not only the alert *level* but the *relationship*. In training (calm era), recent activity barely predicts the next 3h: P rises from 0.12 to 0.19 across `starts_24h` bins and is flat above 2 starts. Single-feature ROC-AUC of `starts_24h` is 0.56 in train vs 0.75 in val. 240 of 574 validation hours have more than 6 starts in the last 24h; only 69 of 31,941 training hours do.
+- **Boosted trees invert the ranking** (AUC < 0.5). In the sparse high-activity tail they learned "very active → lower P". LightGBM's P falls from 0.08 to 0.044 as `starts_24h` goes from 3 to 6 and then stays flat: trees cannot extrapolate beyond the training range. They predict 0.08–0.10 exactly where validation sees 0.63–0.84. Shuffling `starts_24h` *improves* LightGBM's validation AUC by 0.064.
+- **Logistic is monotone and extrapolates in the right direction** (P rises 0.23 → 0.37 across the same bins), but the slope and intercept are learned from the calm era, so it is far too low. The correlated count features also split credit (7d positive, 24h negative), while 24h is the signal that matters in the escalation.
+- **The 24h Poisson baseline wins because it learns nothing from the calm era.** It maps current intensity straight to a probability.
