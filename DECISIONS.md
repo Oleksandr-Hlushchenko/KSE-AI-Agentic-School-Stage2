@@ -95,3 +95,20 @@ Test period: forecasts issued 2026-09-17 00:00 → 2026-10-14 21:00 Kyiv. It is 
 - References, to show the path from the first attempt: `recent_rate_24h` without the floor; logistic and LightGBM trained once (on train+val for the test); LightGBM walk-forward without decay.
 - Protocol: models trained once are fit on 2023-01-01 → 2026-09-16. Walk-forward models refit every Kyiv midnight on all labels observed by then, including earlier test days.
 - Expectation written down beforehand: the test base rate is 0.70, higher than validation (0.57), and the escalation continues. The recent-rate approach should keep working. Models trained once should do badly again, though less than on validation, because train+val now includes 3 weeks of escalation.
+
+## Test results (scored once, 2026-09-17 → 2026-10-14, 670 hours, base rate 0.701)
+| model | BSS all / calm | log loss | ROC-AUC all / calm | mean p |
+|---|---|---|---|---|
+| recent_rate_24h_floor (**pre-registered primary**) | −0.105 / −0.250 | 0.658 | 0.54 / 0.56 | 0.59 |
+| recent_rate_24h (no floor) | identical: no test hour had 0 starts in the last 24h | | | |
+| logistic, trained once | −0.220 / −0.446 | 0.705 | 0.61 / 0.63 | 0.47 |
+| LightGBM, trained once | −0.058 / −0.104 | 0.639 | 0.61 / 0.67 | 0.62 |
+| LightGBM, walk-forward | −0.006 / −0.012 | 0.612 | 0.62 / 0.64 | 0.66 |
+| **logistic, walk-forward, 14-day decay** | **+0.044 / +0.024** | **0.587** | **0.64** / 0.65 | 0.67 |
+
+- **The pre-registered primary lost.** Validation picked the 24h baseline. On test it is worse than a constant at the period's base rate, and it barely ranks hours (AUC 0.54).
+- **The best learned model won on test**, and robustly: its Brier improvement over the baseline is +0.031, with a 95% day-block bootstrap CI of [+0.016, +0.047] over 28 days. It beats the baseline in all 4 weeks. Its improvement over walk-forward LightGBM is +0.010, CI [+0.000, +0.019].
+- **Why the baseline broke:** its Poisson mapping from counts to probability is fixed. In the test period alerts are almost continuous, so the count no longer separates hours: with ≤ 4 starts in 24h, 57–83% of hours were still followed by a start. It also underpredicts the level (0.59 vs 0.70), especially in calm hours (0.58 vs 0.77). In calm hours a new start is *more* likely than during an alert (0.77 vs 0.59), because a new start can only follow an all-clear. The baseline cannot represent that.
+- **Why the decay model wins:** it learns from recent *outcomes*, not only counts. Every day it refits the level and the role of `active_now` / time since the last all-clear on roughly the last 2 weeks. On validation this was hidden because the escalation had just begun (0–1.2% of the training rows); by the test period it had 3+ weeks of escalation to learn from.
+- **Absolute skill is small** (BSS +0.04, AUC 0.64). In this regime, forecasting 3h onsets is mostly about getting the level right; ranking individual hours remains hard.
+- Post-hoc analysis above is descriptive only; no model was changed after scoring the test.

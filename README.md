@@ -35,9 +35,16 @@ scripts/run_eval.py
 tests/          data, label and leakage tests
 ```
 
+## Result (test, 17 Sep – 14 Oct 2026, scored once)
+Best: **walk-forward logistic regression with 14-day time-decay weights**: Brier skill +0.04 vs the period's base rate, log loss 0.587, ROC-AUC 0.64. It beats the 24h recent-rate baseline (Brier skill −0.10) in all 4 weeks; bootstrap 95% CI for the Brier gain [+0.016, +0.047]. The baseline had been chosen as primary on validation, before the test was scored. The full story is in [DECISIONS.md](DECISIONS.md).
+
+```bash
+.venv/bin/python scripts/run_eval.py --test   # scores the frozen final set on the test period
+```
+
 ## Status
 - [x] Data loading, labeling, leakage tests, baselines
 - [x] First models (logistic regression, gradient boosting) — both lose to the 24h baseline, see DECISIONS.md
 - [x] Walk-forward daily retraining; baseline log-odds as a feature — helps, still below the 24h baseline
 - [x] Time-decay weights (14d / 60d): logistic reaches BSS +0.06, still below the 24h baseline
-- [ ] One-time evaluation on the test period
+- [x] One-time evaluation on the test period (plan frozen in commit 6ce1942 before scoring)
