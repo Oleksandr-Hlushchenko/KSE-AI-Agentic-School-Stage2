@@ -70,6 +70,7 @@ src/air_alerts/
 scripts/predict.py
 scripts/check_minute_offsets.py   off-the-hour forecasts vs on-the-hour, test period
 scripts/analyze_test.py           bootstrap CI and breakdowns for the test result
+scripts/make_charts.py            README charts -> reports/figures/
 scripts/run_eval.py
 tests/          data, label and leakage tests
 ```
@@ -82,7 +83,42 @@ Best: **walk-forward logistic regression with 14-day time-decay weights**: Brier
 ```bash
 .venv/bin/python scripts/run_eval.py --test   # scores the frozen final set on the test period
 .venv/bin/python scripts/analyze_test.py      # bootstrap CI, weekly skill, calibration by activity
+.venv/bin/python scripts/make_charts.py       # redraw the charts below from the saved reports
 ```
+
+## Charts
+
+### How alert frequency changed
+![Alert starts in Kyiv City per complete week since January 2023, and per day from June to mid-October 2026](reports/figures/alert_frequency.png)
+
+From January 2023 to August 2026 Kyiv had mostly 3–15 alert starts a week (about 9 on
+average; one week, from 9 October 2023, had none). From 24 August 2026 the rate of recorded
+starts jumped: about 7 a day on average, ranging from 1 to 13 (24 Aug – 14 Oct). That was two
+weeks *before* the yellow/red alert levels were introduced on 6 September, so the rise is not
+an artifact of the new format. The weekly chart shows only complete Monday–Sunday weeks. The validation
+and test periods both fall inside this high-rate period. Every model trained mostly on the calm
+years had to cope with that shift.
+
+### How the baseline and models did
+![Brier skill score and ROC-AUC for the baseline and four models, on validation and test](reports/figures/model_comparison.png)
+
+| Forecaster | Brier skill, validation | Brier skill, test | ROC-AUC, validation | ROC-AUC, test |
+|---|---:|---:|---:|---:|
+| 24h baseline (pre-registered primary) | **+0.15** | −0.10 | **0.75** | 0.54 |
+| Logistic regression, trained once | −0.22 | −0.22 | 0.63 | 0.61 |
+| LightGBM, trained once | −0.90 | −0.06 | 0.36 | 0.61 |
+| LightGBM, retrained daily | −0.07 | −0.01 | 0.61 | 0.62 |
+| Logistic, retrained daily, 14-day decay (live model) | +0.06 | **+0.04** | 0.67 | **0.64** |
+
+Brier skill compares each forecast with a constant equal to the period's own alert rate, which
+is a hindsight reference: above 0 means more informative than knowing that rate. ROC-AUC
+measures how well hours are ranked (0.5 = random). "Trained once" means fit on all data before
+the period, so for test it includes the validation weeks. "Retrained daily" means refit every
+midnight on the outcomes known by then.
+
+The baseline won validation and lost on test. Learned models trained once on the calm years
+failed when the alert rate jumped; LightGBM even ranked hours backwards (AUC 0.36). Retraining
+daily, and weighting recent weeks more, is what worked on test.
 
 ## Status
 - [x] Data loading, labeling, leakage tests, baselines
