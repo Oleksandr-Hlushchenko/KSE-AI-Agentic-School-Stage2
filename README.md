@@ -1,5 +1,7 @@
 # Air-raid alert forecasting — Kyiv City
 
+[![Tests](https://github.com/Oleksandr-Hlushchenko/KSE-AI-Agentic-School-Stage2/actions/workflows/tests.yml/badge.svg)](https://github.com/Oleksandr-Hlushchenko/KSE-AI-Agentic-School-Stage2/actions/workflows/tests.yml)
+
 KSE Agentic AI School, Stage 2. At the top of every hour, forecast the probability that
 **a new air-raid alert starts in Kyiv City within the next 3 hours**, using only information
 published before that moment.
@@ -95,6 +97,7 @@ scripts/check_minute_offsets.py   off-the-hour forecasts vs on-the-hour, test pe
 scripts/analyze_test.py           bootstrap CI and breakdowns for the test result
 scripts/make_charts.py            README charts -> reports/figures/
 Dockerfile, docker-compose.yml    container image and services (forecast; tests/evaluate/analyze)
+.github/workflows/tests.yml       CI: full test suite on every push to main
 scripts/run_eval.py
 tests/          data, label and leakage tests
 ```

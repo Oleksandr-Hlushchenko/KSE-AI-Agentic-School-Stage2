@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version the results were produced with (also used in the Dockerfile).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # LightGBM needs the OpenMP runtime; usually preinstalled on the runner, made explicit here.
+      - name: Install system packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgomp1
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # No network needed: downloads are mocked and CLI tests use replay mode on the pinned snapshot.
+      - name: Run tests
+        run: python -m pytest -q
