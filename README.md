@@ -8,6 +8,9 @@ published before that moment.
 
 Why this target and source, and what was rejected, is in [DECISIONS.md](DECISIONS.md).
 
+The full AI conversation log of how the project was built (Claude Code) is in
+[claude-session-log.txt](claude-session-log.txt).
+
 ## Quick start with Docker
 Needs only Docker. The image pins Python 3.12.10 and every dependency.
 ```bash
@@ -98,6 +101,7 @@ scripts/analyze_test.py           bootstrap CI and breakdowns for the test resul
 scripts/make_charts.py            README charts -> reports/figures/
 Dockerfile, docker-compose.yml    container image and services (forecast; tests/evaluate/analyze)
 .github/workflows/tests.yml       CI: full test suite on every push to main
+claude-session-log.txt            full AI conversation log of the development
 scripts/run_eval.py
 tests/          data, label and leakage tests
 ```
